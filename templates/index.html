@@ -500,7 +500,7 @@
             }
 
             .playlist-modal {
-                width: 95%;
+                 width: 95%;
             }
 
             .player-controls button {
@@ -530,9 +530,18 @@
     </header>
 
     <div class="container">
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
         <div class="main-content">
             <div class="video-player-container" id="player-container">
-                <div class="video-player" id="video-player"></div>
+                <div class="video-player" id="video-player">
+                    {% if embed_url %}
+                    <iframe width="100%" height="100%" src="{{ embed_url }}?autoplay=1&rel=0" 
+                        frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                        allowfullscreen></iframe>
+                    {% endif %}
+                </div>
                 <div class="player-controls">
                     <button id="add-current-to-playlist-btn">Thêm vào danh sách</button>
                 </div>
@@ -559,7 +568,10 @@
 
     <div class="playlist-modal" id="playlist-modal">
         <h2>Danh sách phát</h2>
-        
+        <div class="playlist-link-input">
+            <input type="text" id="playlist-link-input" placeholder="Dán link YouTube...">
+            <button id="add-playlist-link-btn">Thêm từ link</button>
+        </div>
         <button id="export-json-btn">Xuất JSON</button>
         <button id="import-json-btn">Nhập JSON</button>
         <button id="play-all-btn">Phát toàn bộ</button>
@@ -573,7 +585,7 @@
     </form>
 
     <script>
-        const API_KEY = 'YOUR_NEW_API_KEY'; // Thay bằng API key mới
+        const API_KEY = 'YOUR_NEW_API_KEY'; // Thay bằng API key thực tế
         const searchInput = document.getElementById('search-input');
         const searchForm = document.getElementById('search-form');
         const searchResultsDiv = document.getElementById('search-results');
@@ -610,6 +622,7 @@
         let isPlaying = false;
         let playlist = loadPlaylistFromCookie();
         let currentPlaylistIndex = -1;
+        let player;
 
         const isiPhone = /iPhone/i.test(navigator.userAgent);
         if (isiPhone) {
@@ -704,7 +717,7 @@
             currentVideoChannel = channel;
             currentVideoThumbnail = thumbnail;
 
-            const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+            const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&enablejsapi=1`;
 
             videoPlayer.innerHTML = `
                 <iframe width="100%" height="100%" src="${embedUrl}" 
@@ -722,6 +735,23 @@
             }
 
             window.scrollTo(0, 0);
+            activateMiniPlayer();
+
+            // Initialize YouTube Player
+            if (window.YT && window.YT.Player) {
+                player = new YT.Player(videoPlayer.querySelector('iframe'), {
+                    events: {
+                        'onStateChange': onPlayerStateChange
+                    }
+                });
+            }
+        }
+
+        function onPlayerStateChange(event) {
+            if (event.data === YT.PlayerState.ENDED && currentPlaylistIndex < playlist.length - 1) {
+                currentPlaylistIndex++;
+                playVideo(playlist[currentPlaylistIndex].videoId, playlist[currentPlaylistIndex].title, playlist[currentPlaylistIndex].channel, playlist[currentPlaylistIndex].thumbnail);
+            }
         }
 
         function activateMiniPlayer() {
@@ -732,6 +762,16 @@
             if (currentVideoId) {
                 isPlaying = !isPlaying;
                 playBtn.textContent = isPlaying ? '⏸' : '⏯';
+                const iframe = videoPlayer.querySelector('iframe');
+                if (iframe) {
+                    iframe.contentWindow.postMessage(
+                        JSON.stringify({
+                            event: 'command',
+                            func: isPlaying ? 'playVideo' : 'pauseVideo'
+                        }),
+                        '*'
+                    );
+                }
             }
         });
 
@@ -743,35 +783,35 @@
             }
         });
 
-        // Nút "Nếu không thể tìm kiếm"
         fallbackLinkBtn.addEventListener('click', () => {
             linkInputContainer.style.display = linkInputContainer.style.display === 'block' ? 'none' : 'block';
         });
 
         submitLinkBtn.addEventListener('click', () => {
             const link = youtubeLinkInput.value.trim();
-            if (!link) return;
+            if (!link) {
+                alert('Vui lòng nhập link YouTube.');
+                return;
+            }
 
             const videoId = extractYouTubeVideoId(link);
             if (videoId) {
                 const formData = new FormData();
                 formData.append('youtube_url', link);
 
-                fetch('http://localhost:5000/', {
+                fetch('http://localhost:3000/', {
                     method: 'POST',
                     body: formData
                 })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! Status: ${response.status}`);
-                    }
-                    return response.text();
-                })
+                .then(response => response.json())
                 .then(data => {
-                    alert('Link đã được gửi đến backend!');
-                    youtubeLinkInput.value = '';
-                    linkInputContainer.style.display = 'none';
-                    playVideo(videoId);
+                    if (data.error) {
+                        alert(data.error);
+                    } else {
+                        playVideo(videoId);
+                        youtubeLinkInput.value = '';
+                        linkInputContainer.style.display = 'none';
+                    }
                 })
                 .catch(error => {
                     console.error('Lỗi khi gửi link:', error);
@@ -788,7 +828,6 @@
             return match ? match[1] : null;
         }
 
-        // Nút "Danh sách phát"
         playlistBtn.addEventListener('click', () => {
             playlistModal.style.display = 'block';
             renderPlaylist();
@@ -926,18 +965,6 @@
             }
             currentPlaylistIndex = 0;
             playVideo(playlist[0].videoId, playlist[0].title, playlist[0].channel, playlist[0].thumbnail);
-            videoPlayer.querySelector('iframe').onload = () => {
-                const player = new YT.Player(videoPlayer.querySelector('iframe'), {
-                    events: {
-                        'onStateChange': (event) => {
-                            if (event.data === YT.PlayerState.ENDED && currentPlaylistIndex < playlist.length - 1) {
-                                currentPlaylistIndex++;
-                                playVideo(playlist[currentPlaylistIndex].videoId, playlist[currentPlaylistIndex].title, playlist[currentPlaylistIndex].channel, playlist[currentPlaylistIndex].thumbnail);
-                            }
-                        }
-                    }
-                });
-            };
         });
 
         addPlaylistLinkBtn.addEventListener('click', () => {
@@ -965,11 +992,21 @@
                 videoId: currentVideoId,
                 title: currentVideoTitle,
                 channel: currentVideoChannel,
-                thumbnail: currentVideoThumbnail || 'https://img.youtube.com/vi/' + currentVideoId + '/mqdefault.jpg'
+                thumbnail: currentVideoThumbnail || `https://img.youtube.com/vi/${currentVideoId}/mqdefault.jpg`
             };
 
             addToPlaylist(video);
         });
+
+        function onYouTubeIframeAPIReady() {
+            if (videoPlayer.querySelector('iframe')) {
+                player = new YT.Player(videoPlayer.querySelector('iframe'), {
+                    events: {
+                        'onStateChange': onPlayerStateChange
+                    }
+                });
+            }
+        }
     </script>
     <script src="https://www.youtube.com/iframe_api"></script>
 </body>
